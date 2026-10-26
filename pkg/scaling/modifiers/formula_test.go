@@ -285,6 +285,113 @@ func TestCalculateScalingModifiersFormula(t *testing.T) {
 	}
 }
 
+func TestCalculateScalingModifiersFormulaIntegerResult(t *testing.T) {
+	tests := []struct {
+		name          string
+		formula       string
+		expectedMilli int64
+	}{
+		{
+			name:          "ternary operator returning integer literal",
+			formula:       "trigger1 > 1 ? 1 : 0",
+			expectedMilli: 1000,
+		},
+		{
+			name:          "fallback operator returning integer literal",
+			formula:       "missing ?? 5",
+			expectedMilli: 5000,
+		},
+		{
+			name:          "int function",
+			formula:       "int(trigger1)",
+			expectedMilli: 2000,
+		},
+		{
+			name:          "expression starting with float() returning integer ternary",
+			formula:       "float(trigger1) > 10 ? 1 : 0",
+			expectedMilli: 0,
+		},
+		{
+			name:          "integer condition and branches",
+			formula:       "trigger1 > 0 ? 10 : 2",
+			expectedMilli: 10000,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			compiledFormula, err := expr.Compile(tt.formula)
+			require.NoError(t, err)
+
+			metric1 := external_metrics.ExternalMetricValue{
+				MetricName: "s0-metric1",
+				Value:      *resource.NewMilliQuantity(2000, resource.DecimalSI),
+				Timestamp:  v1.Now(),
+			}
+
+			pairList := map[string]string{
+				"s0-metric1": "trigger1",
+			}
+
+			cacheObj := &cache.ScalersCache{
+				CompiledFormula: compiledFormula,
+			}
+
+			scaledObject := &kedav1alpha1.ScaledObject{}
+
+			result, err := calculateScalingModifiersFormula(
+				scaledObject,
+				[]external_metrics.ExternalMetricValue{metric1},
+				cacheObj,
+				pairList,
+			)
+			require.NoError(t, err)
+			require.Len(t, result, 1)
+			assert.Equal(t, tt.expectedMilli, result[0].Value.MilliValue())
+		})
+	}
+}
+
+func TestCalculateScalingModifiersFormulaNonNumeric(t *testing.T) {
+	compiledFormula, err := expr.Compile(`"not-a-number"`)
+	require.NoError(t, err)
+
+	cacheObj := &cache.ScalersCache{
+		CompiledFormula: compiledFormula,
+	}
+
+	scaledObject := &kedav1alpha1.ScaledObject{}
+
+	_, err = calculateScalingModifiersFormula(
+		scaledObject,
+		[]external_metrics.ExternalMetricValue{},
+		cacheObj,
+		map[string]string{},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "formula returned non-numeric result")
+}
+
+func TestCalculateScalingModifiersFormulaInvalidFloat(t *testing.T) {
+	compiledFormula, err := expr.Compile("1.0 / 0.0")
+	require.NoError(t, err)
+
+	cacheObj := &cache.ScalersCache{
+		CompiledFormula: compiledFormula,
+	}
+
+	scaledObject := &kedav1alpha1.ScaledObject{}
+
+	_, err = calculateScalingModifiersFormula(
+		scaledObject,
+		[]external_metrics.ExternalMetricValue{},
+		cacheObj,
+		map[string]string{},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "formula evaluated to invalid float value")
+}
+
 func TestCalculateScalingModifiersFormulaFallbackReplicas(t *testing.T) {
 	// "trigger1 ?? trigger2" with no constant fallback: when both triggers
 	// resolve to nil, expr returns nil and the evaluator substitutes

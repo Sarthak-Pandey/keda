@@ -27,6 +27,7 @@ package modifiers
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -120,11 +121,37 @@ func calculateScalingModifiersFormula(so *kedav1alpha1.ScaledObject, list []exte
 		}
 		out = fallbackMetricValue
 	} else {
-		floatVal, ok := tmp.(float64)
-		if !ok {
-			return nil, fmt.Errorf("formula returned non-float result %T (%v)", tmp, tmp)
+		switch v := tmp.(type) {
+		case float64:
+			out = v
+		case float32:
+			out = float64(v)
+		case int:
+			out = float64(v)
+		case int64:
+			out = float64(v)
+		case int32:
+			out = float64(v)
+		case int16:
+			out = float64(v)
+		case int8:
+			out = float64(v)
+		case uint:
+			out = float64(v)
+		case uint64:
+			out = float64(v)
+		case uint32:
+			out = float64(v)
+		case uint16:
+			out = float64(v)
+		case uint8:
+			out = float64(v)
+		default:
+			return nil, fmt.Errorf("formula returned non-numeric result %T (%v)", tmp, tmp)
 		}
-		out = floatVal
+	}
+	if math.IsNaN(out) || math.IsInf(out, 0) {
+		return nil, fmt.Errorf("formula evaluated to invalid float value: %v", out)
 	}
 	ret.Value.SetMilli(int64(out * 1000))
 	return []external_metrics.ExternalMetricValue{ret}, nil
